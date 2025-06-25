@@ -1,0 +1,10 @@
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+flutter config --enable-native-assets
+--enable-experiment=native-assets
+flutter channel master
+
+  "version": "1.9.0",
+  "out_dir": "/Users/bitch/projects/vortex/.dart_tool/hooks_runner/shared/enet/build/",
+  "link_mode_preference": "dynamic",
+  "target_architecture": "x64",
+  "target_os": "macos"
