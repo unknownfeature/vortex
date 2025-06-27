@@ -8,3 +8,8 @@ flutter channel master
   "link_mode_preference": "dynamic",
   "target_architecture": "x64",
   "target_os": "macos"
+
+  dart pub global activate dswitch dswitch_install
+   export PATH=/Users/bitch/.dswitch/active:"$PATH"
+
+    dart --enable-experiment=native-assets run
