@@ -69,7 +69,7 @@ class _PendingMessage {
     return _PendingMessage._inner(parts, total);
   }
 
-  bool addPart(Uint8List partBody, int index, int total) {
+  _PendingMessage addPart(Uint8List partBody, int index, int total) {
     if (total != this._total) {
       throw Exception("totals don't match $total ${this._total}");
     }
@@ -82,13 +82,13 @@ class _PendingMessage {
     }
     Uint8List? currentPart = this._parts[index];
     if (currentPart != null && currentPart == partBody) {
-      return false;
+      return this;
     }
     if (currentPart != null && currentPart != partBody) {
       throw Exception("got another part for the same message and index");
     }
     this._parts[index] = partBody;
-    return true;
+    return this;
   }
 
   bool get canAssembleMessage => this._total == this._parts.length;
@@ -132,6 +132,7 @@ class MessageHandler<MessageType extends Comparable<MessageType>, MessageId exte
     MessagePart<MessageType, MessageId> part = this._partReader(received);
     await this._lock.synchronized(() async {
       _PendingMessage pendingMessage = await this._cache.compute(part.key,  (k, v) {
+
         if (v == null) {
           v = _PendingMessage.fromPart(
             part.body,

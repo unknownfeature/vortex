@@ -1,3 +1,4 @@
+import 'package:synchronized/extension.dart';
 import 'package:synchronized/synchronized.dart';
 
 class LRUCache<K extends Comparable<K>, V> {
@@ -11,10 +12,18 @@ class LRUCache<K extends Comparable<K>, V> {
   Future<void> _cleanUp() async {
     int now = (DateTime.now().millisecondsSinceEpoch / 1000) as int;
     await this._lock.synchronized(
-      () => _timesAdded.removeWhere((k, _) => k + this._expireAfterSeconds < now),
+      () => _timesAdded.synchronized((k, _) => k + this._expireAfterSeconds < now),
     );
   }
 
+  Future<V> _updateTime(K k, V v) async {
+    int now = (DateTime.now().millisecondsSinceEpoch / 1000) as int;
+
+    await this._lock.synchronized(
+          () => _timesAdded[now] = key,
+    );
+    return v;
+  }
   // returns new value
   Future<V> compute(K k, V Function(K, V?) computer) async {
     return await this._lock.synchronized(
