@@ -42,6 +42,7 @@ dependencies:
   native_toolchain_c: ^0.16.2
   code_assets: ^0.19.1
   lru_memory_cache: ^1.0.3
+  synchronized: ^3.4.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

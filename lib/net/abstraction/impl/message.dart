@@ -1,9 +1,12 @@
 import 'dart:collection';
 import 'dart:core';
+import 'dart:nativewrappers/_internal/vm/lib/internal_patch.dart';
 import 'dart:typed_data';
 import 'package:vortex/net/abstraction/handler.dart';
-import 'package:lru_memory_cache/lru_memory_cache.dart';
 import 'dart:math';
+import 'package:synchronized/synchronized.dart';
+import '../../../utils/cache.dart';
+import '../message/types.dart';
 
 enum Size { _8, _16, _32, _64 }
 
@@ -51,101 +54,110 @@ abstract class PacketSpec {
   int checksumLength();
 }
 
-class Message {
-  final MessageType _type;
-  final Uint8List _body;
-
-  Message(this._type, this._body);
-
-  MessageType get type => _type;
-
-  Uint8List get body => _body;
-}
-
-typedef MessageType = int;
-
 class _PendingMessage {
   final Map<int, Uint8List> _parts;
   final int _total;
-  final MessageType _type;
 
-  _PendingMessage(this._parts, this._total, this._type);
+  _PendingMessage._inner(this._parts, this._total);
 
-  static _PendingMessage fromPacket(
-    Uint8List packet,
-    PacketSpec spec,
-    int currentOffset,
-  ) {
-    final MessageType type;
-    final int total;
-    final int index;
-    final Uint8List data;
-
-    int offset = currentOffset;
-    (type, offset) = spec.type(packet, offset);
-    if (type < 0) {
-      throw Exception("invalid type $type");
+  factory _PendingMessage.fromPart(Uint8List partBody, int index, int total) {
+    if (index < 0 || total < 0) {
+      throw Exception("invalid total or index: $total $index");
     }
-
-    (total, offset) = spec.total(packet, offset);
-
-    if (total <= 0) {
-      throw Exception("non positive total $total");
-    }
-
-    if (total > spec.maxParts()) {
-      throw Exception("total $total greater than spec ${spec.maxParts()}");
-    }
-    (index, offset) = spec.index(packet, offset);
-    if (index < 0) {
-      throw Exception("negative index $index");
-    }
-
-    (data, offset) = spec.data(packet, offset);
-
-    if (data.isEmpty || data.length > spec.maxDataLength()) {
-      throw Exception("invalid data with length  ${data.length}");
-    }
-    if (!spec.checksumMatched(packet, data, offset)) {
-      throw Exception("checksum didn't match");
-    }
-
     final Map<int, Uint8List> parts = new HashMap();
-    parts[index] = data;
-
-    return new _PendingMessage(parts, total, type);
+    parts[index] = partBody;
+    return _PendingMessage._inner(parts, total);
   }
 
-  Message toMessage(){
-    if (this._total != this._parts.length){
-      throw Exception("message can't be assembled");
+  bool addPart(Uint8List partBody, int index, int total) {
+    if (total != this._total) {
+      throw Exception("totals don't match $total ${this._total}");
+    }
+    if (index < 0) {
+      throw Exception("invalid index $index");
+    }
+
+    if (partBody.isEmpty) {
+      throw Exception("empty part");
+    }
+    Uint8List? currentPart = this._parts[index];
+    if (currentPart != null && currentPart == partBody) {
+      return false;
+    }
+    if (currentPart != null && currentPart != partBody) {
+      throw Exception("got another part for the same message and index");
+    }
+    this._parts[index] = partBody;
+    return true;
+  }
+
+  bool get canAssembleMessage => this._total == this._parts.length;
+
+  Uint8List toMessageBody() {
+    if (this._total != this._parts.length) {
+      throw Exception(
+        "not redy to construct the message, missing ${this._total - this._parts.length}",
+      );
     }
     List<MapEntry<int, Uint8List>> sortedParts = _parts.entries.toList();
     sortedParts.sort((first, second) => first.key.compareTo(second.key));
-    return Message(_type,sortedParts.map((me) => me.value).fold(Uint8List(), (prev, current) => prev..addAll(current)))
+    return sortedParts
+        .map((me) => me.value)
+        .fold(
+      List.empty(growable: true) as Uint8List,
+          (prev, current) => prev + current as Uint8List,
+    );
   }
 }
 
-class MessageHandler implements Handler<Uint8List, Message> {
+class MessageHandler<MessageType extends Comparable<MessageType>, MessageId extends Comparable<MessageId>>
+    implements Handler<Uint8List, Message<MessageType, MessageId>> {
   final PacketSpec _spec;
-  final Handler<dynamic, Uint8List> _inner;
-  bool _connected = false;
-  final LRUMemoryCache<String, Set<Uint8List>> _cache;
+  final Function(Message<MessageType, MessageId>) _receiveSink;
+  final Function(Uint8List) _sendSink;
+  final LRUCache<MessageKey<MessageType, MessageId>, _PendingMessage> _cache; // todo add expiry
+  final MessagePart<MessageType, MessageId> Function(Uint8List packet)  _partReader;
+  final void Function(Message msg, Function(Uint8List) partConsumer) _messageWriter;
+  final Lock _lock = new Lock(reentrant: true);
+
+  // bool _connected = false;
 
   @override
-  Future<void> connect() {
-    // TODO: implement connect
-    throw UnimplementedError();
+  Future<void> connect() async {
+    // TODO: do we need anything here on this level?
   }
 
   @override
-  Future<Message> receive(Uint8List received) {
-    throw UnimplementedError();
+  Future<void> receive(Uint8List received) async {
+    MessagePart<MessageType, MessageId> part = this._partReader(received);
+    await this._lock.synchronized(() async {
+      _PendingMessage pendingMessage = await this._cache.compute(part.key,  (k, v) {
+        if (v == null) {
+          v = _PendingMessage.fromPart(
+            part.body,
+            part.index,
+            part.total,
+          );
+        } else {
+          v.addPart(part.body, part.index, part.total);
+        }
+        return v;
+      });
+
+      if (pendingMessage.canAssembleMessage) {
+        // todo make sure this operation is atomic
+        Message<MessageType, MessageId> assembled = Message(
+          part.key,
+          pendingMessage.toMessageBody(),
+        );
+        this._receiveSink(assembled);
+        this._cache.remove(part.key);
+      }
+    });
   }
 
   @override
-  Future<void> send(Message out) {
-    // TODO: implement send
-    throw UnimplementedError();
+  Future<void> send(Message<MessageType, MessageId> out) async {
+    this._messageWriter(out, this._sendSink);
   }
 }
