@@ -63,23 +63,20 @@ class _PendingMessage {
 }
 
 class MessageHandler<MessageType, MessageId>
-    implements Handler<Uint8List, Message<MessageType, MessageId>> {
-
+    extends Handler<Uint8List, Message<MessageType, MessageId>> {
   final LRUCache<MessageKey<MessageType, MessageId>, _PendingMessage> _cache;
   final PartReader<MessageType, MessageId> _partReader;
   final MessageWriter<MessageType, MessageId> _messageWriter;
 
-  MessageHandler(this._partReader, this._messageWriter, int messageWindowSeconds):
-        _cache = LRUCache(messageWindowSeconds);
+  MessageHandler(this._partReader, this._messageWriter, int messageWindowSeconds)
+    : _cache = LRUCache(messageWindowSeconds);
 
   @override
-  Future<void> connect() async {
-    // TODO: do we need anything here on this level?
-  }
-
-  @override
-  Future<void> receive(Uint8List received, Function(Message<MessageType, MessageId>) next) async {
-    MessagePart<MessageType, MessageId> part = _partReader.read(received);
+  Future<void> receive(
+    Uint8List received,
+  Chain<Uint8List, Message<MessageType, MessageId>> chain)
+  ) async {
+    MessagePart<MessageType, MessageId> part = await _partReader.read(received);
 
     _PendingMessage pendingMessage = await _cache.compute(
       part.messageKey,
@@ -89,19 +86,21 @@ class MessageHandler<MessageType, MessageId>
     );
 
     if (pendingMessage.canAssembleMessage) {
-      await retry(() {
+      await retry(() async {
         Message<MessageType, MessageId> assembled = Message(
           part.messageKey,
           pendingMessage.assemble(),
         );
-        next(assembled);
+        await chain.next(assembled);
         return _cache.remove(part.messageKey);
       }); // todo retry options
     }
   }
 
   @override
-  Future<void> send(Message<MessageType, MessageId> out, Function(Uint8List) next) async {
-    _messageWriter.write(out, next);
+  Future<void> send(
+    Message<MessageType, MessageId> out,Chain<Uint8List, Message<MessageType, MessageId>> chain) upstreamAction,
+  ) async {
+    await _messageWriter.write(out, chain.prev);
   }
 }

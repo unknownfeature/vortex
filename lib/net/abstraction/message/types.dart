@@ -1,5 +1,6 @@
-import 'dart:math';
 import 'dart:typed_data';
+import '../common/types.dart';
+
 
 class Message<MessageType, MessageId> {
   final MessageKey<MessageType, MessageId> key;
@@ -34,48 +35,10 @@ class MessagePart<MessageType, MessageId> {
   MessagePart(this.index, this.total, this.messageKey, this.body);
 }
 
-enum Size { _8, _16, _32, _64 }
+abstract class Checksum {
+  int get length;
 
-extension SizeExtension on Size {
-  int get bytes {
-    return pow(2, index) as int;
-  }
-
-  int get bits {
-    return 8 * bytes;
-  }
-
-  Uint8List writeUint(int number, [Endian endian = Endian.big]) {
-    final byteData = ByteData(bytes);
-
-    switch (this) {
-      case Size._8:
-        byteData.setUint8(0, number);
-      case Size._16:
-        byteData.setUint16(0, number, endian);
-      case Size._32:
-        byteData.setUint32(0, number, endian);
-      case Size._64:
-        byteData.setUint64(0, number, endian);
-    }
-    return byteData.buffer.asUint8List();
-  }
-
-  int readUint(Uint8List data, [Endian endian = Endian.big]) {
-    if (data.lengthInBytes < bytes) {
-      throw Exception("not enough bytes to extract number");
-    }
-    switch (this) {
-      case Size._8:
-        return ByteData.sublistView(data).getUint8(0);
-      case Size._16:
-        return ByteData.sublistView(data).getUint16(0, endian);
-      case Size._32:
-        return ByteData.sublistView(data).getUint32(0, endian);
-      case Size._64:
-        return ByteData.sublistView(data).getUint64(0, endian);
-    }
-  }
+  Uint8List compute(Uint8List);
 }
 
 abstract class Converter<T> {
@@ -83,21 +46,19 @@ abstract class Converter<T> {
 
   Uint8List Function(T) get from;
 
-  Size get length;
+  Num get length;
 }
 
 abstract class Spec<MessageType, MessageId> {
-  Size get total;
+  Num get total;
 
-  Size get index;
+  Num get index;
 
-  int get checksumSize;
+  Checksum get checksum;
 
   int maxParts(MessageType);
 
   int get partSize;
-
-  Uint8List Function(Uint8List) get checksum;
 
   Converter<MessageId> get messageIdConverter;
 
@@ -115,13 +76,13 @@ class PartReader<MessageType, MessageId> {
         _spec.messageTypeConverter.length.bytes +
         _spec.total.bytes +
         _spec.index.bytes +
-        _spec.checksumSize;
+        _spec.checksum.length;
     if (minLength >= packet.length) {
       throw Exception("packet is too short");
     }
     int offset = 0;
 
-    final int messageIdLength = _spec.messageIdConverter.length.readUint(packet.sublist(offset));
+    final int messageIdLength = _spec.messageIdConverter.length.read(packet.sublist(offset));
     offset += _spec.messageIdConverter.length.bytes;
     if (minLength + messageIdLength >= packet.length) {
       throw Exception("packet is too short");
@@ -133,7 +94,7 @@ class PartReader<MessageType, MessageId> {
 
     offset += messageIdLength;
 
-    final int messageTypeLength = _spec.messageTypeConverter.length.readUint(
+    final int messageTypeLength = _spec.messageTypeConverter.length.read(
       packet.sublist(offset),
     );
     if (minLength + messageIdLength + messageTypeLength >= packet.length) {
@@ -146,7 +107,7 @@ class PartReader<MessageType, MessageId> {
     );
     offset += messageTypeLength;
 
-    final int total = _spec.total.readUint(packet.sublist(offset));
+    final int total = _spec.total.read(packet.sublist(offset));
     offset += _spec.total.bytes;
     if (total > _spec.maxParts(type)) {
       throw Exception("too many parts");
@@ -154,7 +115,7 @@ class PartReader<MessageType, MessageId> {
     if (total < 0) {
       throw Exception("total is negative");
     }
-    final int index = _spec.index.readUint(packet.sublist(offset));
+    final int index = _spec.index.read(packet.sublist(offset));
     offset += _spec.index.bytes;
     if (index < 0) {
       throw Exception("total is negative");
@@ -163,13 +124,13 @@ class PartReader<MessageType, MessageId> {
       throw Exception("index should be less than total");
     }
 
-    final Uint8List dataWithChecksum = packet.sublist(offset);
-    final Uint8List data = dataWithChecksum.sublist(
-      0,
-      dataWithChecksum.length - _spec.checksumSize,
+
+    final Uint8List checksum = packet.sublist(offset, _spec.checksum.length);
+    offset +=  _spec.checksum.length;
+    final Uint8List data = packet.sublist(
+      offset
     );
-    final Uint8List checksum = dataWithChecksum.sublist(data.length);
-    if (_spec.checksum(data) != checksum) {
+    if (_spec.checksum.compute(data) != checksum) {
       throw Exception("checksum doesn't match");
     }
 
@@ -229,19 +190,19 @@ class MessageWriter<MessageType, MessageId> {
     final int marshalledIdLength = marshalledId.length;
     final Uint8List marshalledType = _spec.messageTypeConverter.from(part.messageKey.type);
     final int marshalledTypeLength = marshalledType.length;
-    final Uint8List partChecksum = _spec.checksum(part.body);
-    if (partChecksum.length != _spec.checksumSize) {
-      throw Exception("invalid checksum function");
+    final Uint8List partChecksum = _spec.checksum.compute(part.body);
+    if (partChecksum.length != _spec.checksum.length){
+      throw Exception("can't compute checksum");
     }
 
-    List<int> result = _spec.messageIdConverter.length.writeUint(marshalledIdLength);
+    List<int> result = _spec.messageIdConverter.length.write(marshalledIdLength);
     result += marshalledId;
-    result += _spec.messageIdConverter.length.writeUint(marshalledTypeLength);
+    result += _spec.messageIdConverter.length.write(marshalledTypeLength);
     result += marshalledType;
-    result += _spec.total.writeUint(part.total);
-    result += _spec.index.writeUint(part.index);
-    result += part.body;
+    result += _spec.total.write(part.total);
+    result += _spec.index.write(part.index);
     result += partChecksum;
+    result += part.body;
     await marshalledPartConsumer(Uint8List.fromList(result));
   }
 }
