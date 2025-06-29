@@ -83,7 +83,7 @@ abstract class Converter<T> {
 
   Uint8List Function(T) get from;
 
-  Size get sizeLength;
+  Size get length;
 }
 
 abstract class PartReaderSpec<MessageType, MessageId> {
@@ -109,8 +109,8 @@ class PartReader<MessageType, MessageId> {
 
   MessagePart<MessageType, MessageId> read(Uint8List packet) {
     int minLength =
-        _spec.messageIdConverter.sizeLength.bytes +
-        _spec.messageTypeConverter.sizeLength.bytes +
+        _spec.messageIdConverter.length.bytes +
+        _spec.messageTypeConverter.length.bytes +
         _spec.total.bytes +
         _spec.index.bytes +
         _spec.checksumSize;
@@ -119,10 +119,10 @@ class PartReader<MessageType, MessageId> {
     }
     int offset = 0;
 
-    final int messageIdLength = _spec.messageIdConverter.sizeLength.readUint(
+    final int messageIdLength = _spec.messageIdConverter.length.readUint(
       packet.sublist(offset),
     );
-    offset += _spec.messageIdConverter.sizeLength.bytes;
+    offset += _spec.messageIdConverter.length.bytes;
     if (minLength + messageIdLength >= packet.length) {
       throw Exception("packet is too short");
     }
@@ -133,13 +133,13 @@ class PartReader<MessageType, MessageId> {
 
     offset += messageIdLength;
 
-    final int messageTypeLength = _spec.messageTypeConverter.sizeLength.readUint(
+    final int messageTypeLength = _spec.messageTypeConverter.length.readUint(
       packet.sublist(offset),
     );
     if (minLength + messageIdLength + messageTypeLength >= packet.length) {
       throw Exception("packet is too short");
     }
-    offset += _spec.messageTypeConverter.sizeLength.bytes;
+    offset += _spec.messageTypeConverter.length.bytes;
 
     final MessageType type = _spec.messageTypeConverter.to(
       packet.sublist(offset, messageTypeLength),
