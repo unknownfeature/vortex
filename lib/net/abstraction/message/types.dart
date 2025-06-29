@@ -86,7 +86,7 @@ abstract class Converter<T> {
   Size get length;
 }
 
-abstract class PartReaderSpec<MessageType, MessageId> {
+abstract class Spec<MessageType, MessageId> {
   Size get total;
 
   Size get index;
@@ -95,7 +95,9 @@ abstract class PartReaderSpec<MessageType, MessageId> {
 
   int maxParts(MessageType);
 
-  Function(Uint8List) get checksum;
+  int get partSize;
+
+  Uint8List Function(Uint8List) get checksum;
 
   Converter<MessageId> get messageIdConverter;
 
@@ -103,11 +105,11 @@ abstract class PartReaderSpec<MessageType, MessageId> {
 }
 
 class PartReader<MessageType, MessageId> {
-  final PartReaderSpec _spec;
+  final Spec _spec;
 
   PartReader(this._spec);
 
-  MessagePart<MessageType, MessageId> read(Uint8List packet) {
+  Future<MessagePart<MessageType, MessageId>> read(Uint8List packet) async {
     int minLength =
         _spec.messageIdConverter.length.bytes +
         _spec.messageTypeConverter.length.bytes +
@@ -119,9 +121,7 @@ class PartReader<MessageType, MessageId> {
     }
     int offset = 0;
 
-    final int messageIdLength = _spec.messageIdConverter.length.readUint(
-      packet.sublist(offset),
-    );
+    final int messageIdLength = _spec.messageIdConverter.length.readUint(packet.sublist(offset));
     offset += _spec.messageIdConverter.length.bytes;
     if (minLength + messageIdLength >= packet.length) {
       throw Exception("packet is too short");
@@ -182,14 +182,74 @@ class PartReader<MessageType, MessageId> {
   }
 }
 
+class MessageWriter<MessageType, MessageId> {
+  final Spec _spec;
+
+  MessageWriter(this._spec);
+
+  Future<void> write(Message msg, Future<void> Function(Uint8List) partConsumer) async {
+    Uint8List bytes = msg.body;
+    if (bytes.isEmpty) {
+      throw Exception("can't send empty message");
+    }
+    final int totalParts = (bytes.length / _spec.partSize).ceil();
+    if (totalParts > _spec.maxParts(msg.key.type)) {
+      throw Exception("message is too large");
+    }
+    int offset = 0;
+
+    final List<Future<void>> futures = [];
+    int counter = 0;
+    while (offset < bytes.length) {
+      int end = offset + _spec.partSize;
+      if (end > bytes.length) {
+        end = bytes.length;
+      }
+      Uint8List part = bytes.sublist(offset, end);
+      futures.add(
+        _assembleAndSubmitPart(
+          MessagePart<MessageType, MessageId>(
+            counter++,
+            totalParts,
+            MessageKey<MessageType, MessageId>(msg.key.type, msg.key.id),
+            part,
+          ),
+          partConsumer,
+        ),
+      );
+      offset = end;
+    }
+  }
+
+  Future<void> _assembleAndSubmitPart(
+    MessagePart<MessageType, MessageId> part,
+      Future<void> Function(Uint8List) marshalledPartConsumer,
+  ) async {
+    final Uint8List marshalledId = _spec.messageIdConverter.from(part.messageKey.id);
+    final int marshalledIdLength = marshalledId.length;
+    final Uint8List marshalledType = _spec.messageTypeConverter.from(part.messageKey.type);
+    final int marshalledTypeLength = marshalledType.length;
+    final Uint8List partChecksum = _spec.checksum(part.body);
+    if (partChecksum.length != _spec.checksumSize) {
+      throw Exception("invalid checksum function");
+    }
+
+    List<int> result = _spec.messageIdConverter.length.writeUint(marshalledIdLength);
+    result += marshalledId;
+    result += _spec.messageIdConverter.length.writeUint(marshalledTypeLength);
+    result += marshalledType;
+    result += _spec.total.writeUint(part.total);
+    result += _spec.index.writeUint(part.index);
+    result += part.body;
+    result += partChecksum;
+    await marshalledPartConsumer(Uint8List.fromList(result));
+  }
+}
+
 abstract class HandlerSpec<MessageType, MessageId> {
-  Function(Message<MessageType, MessageId>) get receiveSink;
-
-  Function(Uint8List) get sendSink;
-
   int get messageWindowSeconds;
 
   PartReader<MessageType, MessageId> get partReader;
 
-  Function(Message msg, Function(Uint8List) partConsumer) get messageWriter;
+  MessageWriter<MessageType, MessageId> get messageWriter;
 }

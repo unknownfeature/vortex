@@ -15,21 +15,3 @@ abstract class Spec<MessageType, MessageId> {
 }
 
 
-
-abstract class PacketSpec {
-  (MessageType, int) type(Uint8List packet, int offset);
-
-  (int, int) total(Uint8List packet, int offset);
-
-  (int, int) index(Uint8List packet, int offset);
-
-  (Uint8List, int) data(Uint8List packet, int offset);
-
-  bool checksumMatched(Uint8List packet, Uint8List data, int offset);
-
-  int maxParts();
-
-  int maxDataLength();
-
-  int checksumLength();
-}

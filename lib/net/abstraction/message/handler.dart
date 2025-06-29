@@ -64,29 +64,13 @@ class _PendingMessage {
 
 class MessageHandler<MessageType, MessageId>
     implements Handler<Uint8List, Message<MessageType, MessageId>> {
-  final Function(Message<MessageType, MessageId>) _receiveSink;
-  final Function(Uint8List) _sendSink;
+
   final LRUCache<MessageKey<MessageType, MessageId>, _PendingMessage> _cache;
-  final  PartReader<MessageType, MessageId>  _partReader;
-  final void Function(Message msg, Function(Uint8List) partConsumer) _messageWriter;
+  final PartReader<MessageType, MessageId> _partReader;
+  final MessageWriter<MessageType, MessageId> _messageWriter;
 
-  MessageHandler._inner(
-    this._receiveSink,
-    this._sendSink,
-    this._cache,
-    this._partReader,
-    this._messageWriter,
-  );
-
-  factory(HandlerSpec<MessageType, MessageId> spec) {
-    return (
-      spec.receiveSink,
-      spec.sendSink,
-      LRUCache(spec.messageWindowSeconds),
-      spec.partReader,
-      spec.messageWriter,
-    );
-  }
+  MessageHandler(this._partReader, this._messageWriter, int messageWindowSeconds):
+        _cache = LRUCache(messageWindowSeconds);
 
   @override
   Future<void> connect() async {
@@ -94,7 +78,7 @@ class MessageHandler<MessageType, MessageId>
   }
 
   @override
-  Future<void> receive(Uint8List received) async {
+  Future<void> receive(Uint8List received, Function(Message<MessageType, MessageId>) next) async {
     MessagePart<MessageType, MessageId> part = _partReader.read(received);
 
     _PendingMessage pendingMessage = await _cache.compute(
@@ -110,14 +94,14 @@ class MessageHandler<MessageType, MessageId>
           part.messageKey,
           pendingMessage.assemble(),
         );
-        _receiveSink(assembled);
+        next(assembled);
         return _cache.remove(part.messageKey);
       }); // todo retry options
     }
   }
 
   @override
-  Future<void> send(Message<MessageType, MessageId> out) async {
-    _messageWriter(out, _sendSink);
+  Future<void> send(Message<MessageType, MessageId> out, Function(Uint8List) next) async {
+    _messageWriter.write(out, next);
   }
 }
