@@ -1,45 +1,48 @@
-import 'package:synchronized/extension.dart';
 import 'package:synchronized/synchronized.dart';
 
-class LRUCache<K extends Comparable<K>, V> {
-  final Map<K, V> _inner = {};
-  final Map<int, K> _timesAdded = {};
-  final Lock _lock = new Lock(reentrant: true);
+class _TimedValue<V> {
+  final V _v;
+  final int _time;
+
+
+  _TimedValue(this._v, this._time);
+
+  V get value => _v;
+  int get time => _time;
+}
+
+// todo UT
+class LRUCache<K, V> {
+  final Map<K, _TimedValue<V>> _inner = {};
+  final Lock _lock = Lock(reentrant: false);
   final int _expireAfterSeconds;
 
   LRUCache(this._expireAfterSeconds);
 
   Future<void> _cleanUp() async {
     int now = (DateTime.now().millisecondsSinceEpoch / 1000) as int;
-    await this._lock.synchronized(
-      () => _timesAdded.synchronized((k, _) => k + this._expireAfterSeconds < now),
+    await _lock.synchronized(
+      () => _inner.removeWhere((k, v) => v.time + _expireAfterSeconds < now),
     );
   }
 
-  Future<V> _updateTime(K k, V v) async {
-    int now = (DateTime.now().millisecondsSinceEpoch / 1000) as int;
 
-    await this._lock.synchronized(
-          () => _timesAdded[now] = key,
-    );
-    return v;
-  }
   // returns new value
   Future<V> compute(K k, V Function(K, V?) computer) async {
-    return await this._lock.synchronized(
-      () => this._cleanUp().then((_) {
-        V newOne = computer(k, this._inner[k]);
-        this._inner[k] = newOne;
+    return await _lock.synchronized(
+      () => _cleanUp().then((_) {
+        V newOne = computer(k, _inner[k]?.value);
+        _inner[k] =_TimedValue(newOne, (DateTime.now().millisecondsSinceEpoch / 1000) as int);
         return newOne;
       }),
     );
   }
 
   Future<V?> get(K k) async {
-    return await this._lock.synchronized(() => this._cleanUp().then((_) => this._inner[k]));
+    return await _lock.synchronized(() => _cleanUp().then((_) => _inner[k]?.value));
   }
 
   Future<V?> remove(K k) async {
-    return await this._lock.synchronized(() => this._cleanUp().then((_) => this._inner.remove(k)));
+    return await _lock.synchronized(() => _cleanUp().then((_) => _inner.remove(k)?.value));
   }
 }
