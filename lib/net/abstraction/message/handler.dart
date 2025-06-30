@@ -74,7 +74,7 @@ class MessageHandler<MessageType, MessageId>
   @override
   Future<void> receive(
     Uint8List received,
-  Chain<Uint8List, Message<MessageType, MessageId>> chain)
+    Chain<Uint8List, Message<MessageType, MessageId>> chain,
   ) async {
     MessagePart<MessageType, MessageId> part = await _partReader.read(received);
 
@@ -91,7 +91,7 @@ class MessageHandler<MessageType, MessageId>
           part.messageKey,
           pendingMessage.assemble(),
         );
-        await chain.next(assembled);
+        await chain.receive(assembled);
         return _cache.remove(part.messageKey);
       }); // todo retry options
     }
@@ -99,8 +99,9 @@ class MessageHandler<MessageType, MessageId>
 
   @override
   Future<void> send(
-    Message<MessageType, MessageId> out,Chain<Uint8List, Message<MessageType, MessageId>> chain) upstreamAction,
+    Message<MessageType, MessageId> out,
+    Chain<Uint8List, Message<MessageType, MessageId>> chain,
   ) async {
-    await _messageWriter.write(out, chain.prev);
+    await _messageWriter.write(out, chain.send);
   }
 }
