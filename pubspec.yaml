@@ -45,6 +45,14 @@ dependencies:
   synchronized: ^3.4.0
   retry: ^3.1.2
   crypto: ^3.0.6
+  secp256k1: ^0.3.0
+  hashlib: ^2.0.0
+  convert: ^3.1.2
+  flutter_sodium: ^0.2.0
+  encrypt: ^5.0.3
+
+dependency_overrides:
+  ffi:  ^2.1.4
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -54,7 +62,7 @@ dev_dependencies:
   # activated in the `analysis_options.yaml` file located at the root of your
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
-  flutter_lints: ^5.0.0
+  flutter_lints: ^6.0.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

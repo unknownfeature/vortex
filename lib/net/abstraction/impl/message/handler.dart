@@ -5,7 +5,7 @@ import 'dart:typed_data';
 import 'package:retry/retry.dart';
 import 'package:vortex/net/abstraction/handler.dart';
 
-import '../../../utils/cache.dart';
+import '../../../../utils/cache.dart';
 import 'types.dart';
 
 class _PendingMessage {
@@ -105,15 +105,4 @@ class MessageHandler<MessageType, MessageId>
     await _messageWriter.write(out, chain.send);
   }
 
-  @override
-  Future<void> connect(Chain<Uint8List, Message<MessageType, MessageId>> chain) {
-    // TODO: implement connect
-    throw UnimplementedError();
-  }
-
-  @override
-  Future<void> disconnect(Chain<Uint8List, Message<MessageType, MessageId>> chain) {
-    // TODO: implement disconnect
-    throw UnimplementedError();
-  }
 }

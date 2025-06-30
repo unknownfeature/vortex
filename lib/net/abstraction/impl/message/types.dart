@@ -1,7 +1,6 @@
 import 'dart:typed_data';
-import 'package:vortex/net/abstraction/handler.dart';
 
-import '../common/types.dart';
+import '../../common/types.dart';
 
 
 class Message<MessageType, MessageId> {
