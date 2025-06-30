@@ -44,6 +44,7 @@ dependencies:
   lru_memory_cache: ^1.0.3
   synchronized: ^3.4.0
   retry: ^3.1.2
+  crypto: ^3.0.6
 dev_dependencies:
   flutter_test:
     sdk: flutter

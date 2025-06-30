@@ -104,4 +104,16 @@ class MessageHandler<MessageType, MessageId>
   ) async {
     await _messageWriter.write(out, chain.send);
   }
+
+  @override
+  Future<void> connect(Chain<Uint8List, Message<MessageType, MessageId>> chain) {
+    // TODO: implement connect
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> disconnect(Chain<Uint8List, Message<MessageType, MessageId>> chain) {
+    // TODO: implement disconnect
+    throw UnimplementedError();
+  }
 }

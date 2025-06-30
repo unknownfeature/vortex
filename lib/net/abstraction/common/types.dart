@@ -4,6 +4,9 @@ import 'dart:typed_data';
 enum Num { uint8, uint16, uint32, uint64 }
 
 extension SizeExtension on Num {
+  int get max {
+    return pow(2, bits) - 1 as int;
+  }
   int get bytes {
     return pow(2, index) as int;
   }

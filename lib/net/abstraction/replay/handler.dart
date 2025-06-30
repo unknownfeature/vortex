@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:core';
 import 'dart:math';
 import 'dart:typed_data';
@@ -10,7 +11,30 @@ import '../common/types.dart';
 final _random = Random();
 const int _maxStartSequence = 4_294_967_296;
 
-enum PacketType { SYN, ACK, SYNACK, DATA }
+Uint8List _checksum(Uint8List packet) {
+  return Num.uint16.write(packet.reduce((one, two) => (one + two) % Num.uint16.max));
+}
+
+Future<State> _handle(Uint8List packet, State state, Chain<Uint8List, Uint8List> chain) {
+  if (packet.length < Num.uint16.bytes) {
+    throw Exception("packet too short");
+  }
+  Uint8List chksm = packet.sublist(packet.length - Num.uint16.bytes);
+  Uint8List dataWithoutChecksum = packet.sublist(0, packet.length - Num.uint16.bytes);
+
+  if (_checksum(dataWithoutChecksum) != chksm) {
+    throw Exception("checksum didn't match");
+  }
+  PacketType receivedType = PacketType.values[Num.uint8.read(dataWithoutChecksum)];
+  final int expectedSize = receivedType._expectedSize();
+
+  if (packet.length != expectedSize && expectedSize >= 0) {
+    throw Exception("invalid packet length");
+  }
+  return receivedType._handle(dataWithoutChecksum.sublist(Num.uint8.bytes), state, chain);
+}
+
+enum PacketType { SYN, ACK, SYNACK, DATA, DISCONNECT }
 
 class State {
   final ourSequence;
@@ -23,48 +47,19 @@ extension Extension on PacketType {
   int _expectedSize() {
     switch (this) {
       case PacketType.SYN:
-        return Num.uint64.bytes + Num.uint8.bytes;
+        return Num.uint64.bytes + Num.uint8.bytes + Num.uint16.bytes;
       case PacketType.ACK:
-        return Num.uint64.bytes + Num.uint8.bytes;
+        return Num.uint64.bytes + Num.uint8.bytes + Num.uint16.bytes;
       case PacketType.SYNACK:
-        return Num.uint64.bytes * 2 + Num.uint8.bytes;
+        return Num.uint64.bytes * 2 + Num.uint8.bytes + Num.uint16.bytes;
+      case PacketType.DISCONNECT:
+        return Num.uint64.bytes + Num.uint8.bytes + Num.uint16.bytes;
       case PacketType.DATA:
         return -1;
-
     }
   }
 
-  Future<void> handle(
-    Uint8List dataWithPacketType,
-    State state,
-    Future<void> Function(State, [Uint8List?]) done,
-  ) {
-    final int expectedSize = _expectedSize();
-    if (dataWithPacketType.length != expectedSize && expectedSize >= 0) {
-      throw Exception("invalid packet length");
-    }
-    int receivedType = Num.uint8.read(dataWithPacketType);
-    if (receivedType != index) {
-      throw Exception("invalid packet type");
-    }
-    return _handle(dataWithPacketType.sublist(Num.uint8.bytes), state, done);
-  }
-
-  static from(State state) {
-    if (state.ourSequence < 0) {
-      return state.peerSequence < 0 ? PacketType.SYN : PacketType.SYNACK;
-    }
-    if (state.peerSequence < 0) {
-      return PacketType.ACK;
-    }
-    return PacketType.DATA;
-  }
-
-  Future<void> _handle(
-    Uint8List data,
-    State state,
-    Future<void> Function(State, [Uint8List?]) done,
-  ) async {
+  Future<State> _handle(Uint8List data, State state, Chain<Uint8List, Uint8List> chain) async {
     switch (this) {
       case PacketType.SYN:
         int peersSequence = Num.uint64.read(data.sublist(0));
@@ -72,8 +67,13 @@ extension Extension on PacketType {
         if (peersSequence < 0 || peersSequence > _maxStartSequence) {
           throw Exception("invalid our sequence returned");
         }
+        peersSequence++;
 
-        return await done(State(state.ourSequence, state.peerSequence));
+        var toSend = Uint8List.fromList(
+          Num.uint8.write(PacketType.ACK.index) + Num.uint64.write(peersSequence),
+        );
+        unawaited(chain.send(toSend + _checksum(toSend)));
+        return State(state.ourSequence, peersSequence);
 
       case PacketType.ACK:
         int increasedOurSequence = Num.uint64.read(data.sublist(0));
@@ -81,7 +81,15 @@ extension Extension on PacketType {
         if (increasedOurSequence != state.ourSequence + 1) {
           throw Exception("invalid our sequence returned");
         }
-        return await done(State(increasedOurSequence, _random.nextInt(_maxStartSequence)));
+        int peerSequence = _random.nextInt(_maxStartSequence);
+        increasedOurSequence++;
+        var toSend = Uint8List.fromList(
+          Num.uint8.write(PacketType.SYNACK.index) +
+              Num.uint64.write(increasedOurSequence) +
+              Num.uint64.write(peerSequence),
+        );
+        unawaited(chain.send(toSend + _checksum(toSend)));
+        return State(increasedOurSequence, peerSequence);
 
       case PacketType.SYNACK:
         int increasedPeersSequence = Num.uint64.read(data.sublist(0));
@@ -95,77 +103,85 @@ extension Extension on PacketType {
         if (ourSequence < 0 || ourSequence > _maxStartSequence) {
           throw Exception("invalid invalid our sequence");
         }
-        return await done(State(ourSequence, increasedPeersSequence));
-
-      case PacketType.DATA:
+        return State(ourSequence + 1, increasedPeersSequence);
+      case PacketType.DISCONNECT:
         int peerSequence = Num.uint64.read(data.sublist(Num.uint64.bytes));
+
         if (peerSequence <= state.peerSequence) {
           throw Exception("invalid sequence");
         }
-        return await done(State(state.ourSequence, peerSequence), data.sublist(Num.uint64.bytes));
+        return State(-1, -1);
 
+      case PacketType.DATA:
+        int peerSequence = Num.uint64.read(data.sublist(Num.uint64.bytes));
+
+        if (peerSequence <= state.peerSequence) {
+          throw Exception("invalid sequence");
+        }
+        unawaited(chain.receive(data.sublist(Num.uint64.bytes)));
+
+        return State(state.ourSequence, peerSequence);
     }
   }
 }
 
 class ReplayHandler extends Handler<Uint8List, Uint8List> {
-  State _state = State(-1, -1);
-
+  int _ourSeq = -1;
+  int _peerSeq = -1;
   final Lock _lock = Lock(reentrant: false);
 
   @override
   Future<void> receive(Uint8List received, Chain<Uint8List, Uint8List> chain) async {
     return await _lock.synchronized(() async {
-      PacketType packetType = Extension.from(_state);
-      packetType.handle(received, _state, (newState, [data]) async {
-        _state = newState;
-        switch (packetType) {
-          case PacketType.SYN:
-            return await chain.send(
-              Uint8List.fromList(
-                Num.uint8.write(PacketType.ACK.index) + Num.uint64.write(_state.peerSequence),
-              ),
-            );
-          case PacketType.ACK:
-            return await chain.send(
-              Uint8List.fromList(
-                Num.uint8.write(PacketType.SYNACK.index) +
-                    Num.uint64.write(_state.ourSequence) +
-                    Num.uint64.write(_state.peerSequence),
-              ),
-            );
-
-          case PacketType.DATA:
-            return chain.receive(data);
-          case PacketType.SYNACK:
-
-          // do nothing
-        }
-      });
+      final State current = State(_ourSeq, _peerSeq);
+      State newState = await _handle(received, current, chain);
+      _ourSeq = newState.ourSequence;
+      _peerSeq = newState.peerSequence;
     });
   }
 
   @override
   Future<void> send(Uint8List out, Chain<Uint8List, Uint8List> chain) async {
     await _lock.synchronized(() async {
-      if (_state.ourSequence < 0 && _state.peerSequence < 0) {
-        int ourSequence = _random.nextInt(_maxStartSequence);
-        List<int> packet = Num.uint8.write(PacketType.SYN.index);
-        packet += Num.uint64.write(ourSequence);
-        _state = State(ourSequence, _state.peerSequence);
-        return await chain.send(Uint8List.fromList(packet));
-      } else if (_state.ourSequence < 0 || _state.peerSequence < 0) {
-        throw Exception("connection in progress");
+      if (_ourSeq < 0 || _peerSeq < 0) {
+        throw Exception("connection in progress, can't sent");
       }
 
-      _state = State(_state.ourSequence + 1, _state.peerSequence);
       // todo should we retry?
-      return await chain.send(
-        Uint8List.fromList(
-          Num.uint8.write(PacketType.DATA.index) + Num.uint64.write(_state.ourSequence) + out,
-        ),
+      var toSend = Uint8List.fromList(
+        Num.uint8.write(PacketType.DATA.index) + Num.uint64.write(_ourSeq) + out,
       );
+      await chain.send(toSend + _checksum(toSend));
+      _ourSeq++;
     });
   }
 
+  @override
+  Future<void> connect(Chain<Uint8List, Uint8List> chain) async {
+    await chain.connect();
+    return await _lock.synchronized(() async {
+      if (_ourSeq < 0 && _peerSeq < 0) {
+        _ourSeq = _random.nextInt(_maxStartSequence);
+        List<int> packet = Num.uint8.write(PacketType.SYN.index);
+        packet += Num.uint64.write(_ourSeq);
+        await chain.send(Uint8List.fromList(packet));
+      }
+      {
+        throw Exception("connection in progress or already connected");
+      }
+    });
+  }
+
+  @override
+  Future<void> disconnect(Chain<Uint8List, Uint8List> chain) async {
+    await _lock.synchronized(() async {
+      var toSend = Uint8List.fromList(
+        Num.uint8.write(PacketType.DISCONNECT.index) + Num.uint64.write(_ourSeq),
+      );
+      await chain.send(toSend + _checksum(toSend));
+      _ourSeq = _peerSeq = -1;
+    });
+
+    return await chain.disconnect();
+  }
 }
