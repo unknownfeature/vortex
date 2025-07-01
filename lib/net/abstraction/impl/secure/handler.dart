@@ -67,9 +67,9 @@ class SecureHandler extends Handler<Uint8List, Uint8List> {
   }
 
   Uint8List _handshakeMsg() {
+
     List<int> msg =
-        hex.decode(bigIntToHexPadded(_ourKey.publicKey.X)) +
-        hex.decode(bigIntToHexPadded(_ourKey.publicKey.Y)) +
+        hex.decode(_ourKey.publicKey.toHex()) +
         hex.decode(bigIntToHexPadded(randomBigInt(256, N)));
     Uint8List hash = keccak256.convert(msg).bytes;
     Signature sgn = _ourKey.signature(hex.encode(hash));
@@ -87,7 +87,6 @@ class SecureHandler extends Handler<Uint8List, Uint8List> {
   @override
   Future<void> disconnect(Chain<Uint8List, Uint8List> chain) async {
     await _lock.synchronized(() => _cipher = null);
-
     await chain.disconnect();
   }
 }
